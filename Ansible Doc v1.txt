@@ -1,0 +1,797 @@
+#*********************************** Installation ***********************************
+#OS : Centos8
+#Ansible
+sudo dnf makecache
+sudo dnf install epel-release
+sudo dnf makecache
+sudo dnf install python3
+sudo dnf install python3-pip
+sudo dnf install ansible
+
+ssh-keygen
+ssh-copy-id shorouk@192.168.232.130
+
+mkdir ~/ansible
+cd ~/ansible
+vi hosts
+ansible -i hosts -m ping all #if linux machines
+
+#we can activate ansible logging by uncommenting the line about log in /etc/ansible/ansible.cfg and consider adding logrotate to that.
+#------------------------------------------------------------------------------------------------------------------------
+#AWX
+dnf install epel-release -y
+dnf install git gcc gcc-c++ ansible nodejs gettext device-mapper-persistent-data lvm2 bzip2 python3-pip -y
+
+dnf config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo
+dnf install docker-ce --allowerasing 
+systemctl start docker
+systemctl enable docker
+pip3 install docker-compose
+#Add your user to this group to run docker commands without sudo.
+sudo usermod -aG docker $USER
+
+#Set python command to use python 3
+alternatives --set python /usr/bin/python3
+#Create a directory for the Postgres database
+mkdir /var/lib/pgdocker
+
+firewall-cmd --zone=public --add-masquerade --permanent
+firewall-cmd --permanent --add-service=http
+firewall-cmd --permanent --add-service=https
+firewall-cmd --reload
+
+sudo sed -i 's/^SELINUX=.*/SELINUX=permissive/g' /etc/selinux/config
+sudo setenforce 0
+
+git clone -b 17.0.0 https://github.com/ansible/awx.git #--> check latest stable release and put it after -b
+#generate a secret key for encryption of the inventory file and copy it
+openssl rand -base64 30
+		lhQ2dPh3SzLh/k+A4jHOizFMcfMP3b38fmfaz7Xl
+cd awx/installer/
+vi inventory
+	postgres_data_dir="/var/lib/pgdocker"
+	project_data_dir="/var/lib/awx/projects"
+	awx_alternate_dns_servers="8.8.8.8,8.8.4.4"
+	#Change the default Postgres password and generate a random encryption key
+	pg_admin_password=KFWm6y3685
+	secret_key=KjjyJ22TiBp3+cuu2zTPu7/M30iT9sV3rMLhdqR/
+	
+#Run the install Ansible Playbook to deploy the AWX docker containers
+ansible-playbook -i inventory install.yml
+docker ps #4 containers will appear
+
+
+#--------------------Full copy of the inventory-----------------
+[all:vars]
+dockerhub_base=ansible
+awx_task_hostname=awx
+awx_web_hostname=awxweb
+postgres_data_dir="/var/lib/pgdocker"
+host_port=80
+host_port_ssl=443
+docker_compose_dir="~/.awx/awxcompose"
+pg_username=awx
+pg_password=awxpass
+pg_database=awx
+pg_port=5432
+admin_user=admin
+admin_password=password(Ph@rm@P@ssw0rd2021)
+create_preload_data=True
+secret_key=R+kbcDEUS8DlAftAbfWafVqLZ0lUy+Paqo4fEtgp
+awx_official=true #--> For logo so no problem if left as default
+awx_alternate_dns_servers="8.8.8.8,8.8.4.4"
+project_data_dir=/var/lib/awx/projects
+#in some websites
+pg_admin_password=password
+rabbitmq_password=awxpass
+rabbitmq_erlang_cookie=cookiemonster
+#
+
+#------------------------------------------------------------------------------------------------------------------------
+#Working with awx
+1- Create an organization or use the default (you can add users and decide thier permisions)
+2- Add credential (type is machine in our case and give it a name and choose your organization ) with password or keys
+3- Add an inventory which is a collection of hosts managed by Ansible. (Give it a name and use the organization then add hosts to it)
+#A group might represent a particular environment (e.g. “Datacenter 1”), a server type (e.g. “Web Servers”), or any other representation of the environment.
+4-Create a project(A Project is a logical collection of Ansible playbooks)
+#On the Source Control Manager (SCM) type, you can create a git (subversion)repo that has all of your playbooks or Manual which creates a local folder on your server.
+5- Setting up a template and launching it ( use the Inventory, Project, Credential and Playbook we added in the folder and give the template a name)
+
+
+#*********************************** Ansible with windows ***********************************
+#------------------------------------------------------------------------------------------------------------------------
+#Requirements:
+1- OSs including Windows 7, 8.1, and 10, and server OSs including Windows Server 2008, 2008 R2, 2012, 2012 R2, 2016, and 2019.
+2- Ansible requires PowerShell 3.0 or newer and at least .NET 4.0 to be installed on the Windows host.
+3- A WinRM listener should be created and activated.
+
+#Steps:
+#run these powershell commands
+$url = "https://raw.githubusercontent.com/jborean93/ansible-windows/master/scripts/Upgrade-PowerShell.ps1"
+$file = "$env:temp\Upgrade-PowerShell.ps1"
+$username = "Administrator"
+$password = "Password"
+
+(New-Object -TypeName System.Net.WebClient).DownloadFile($url, $file)
+Set-ExecutionPolicy -ExecutionPolicy Unrestricted -Force
+
+# Version can be 3.0, 4.0 or 5.1
+&$file -Version 5.1 -Username $username -Password $password -Verbose
+
+#then
+Set-ExecutionPolicy -ExecutionPolicy Restricted -Force
+
+$reg_winlogon_path = "HKLM:\Software\Microsoft\Windows NT\CurrentVersion\Winlogon"
+Set-ItemProperty -Path $reg_winlogon_path -Name AutoAdminLogon -Value 0
+Remove-ItemProperty -Path $reg_winlogon_path -Name DefaultUserName -ErrorAction SilentlyContinue
+Remove-ItemProperty -Path $reg_winlogon_path -Name DefaultPassword -ErrorAction SilentlyContinue
+
+#When running on PowerShell v3.0, there is a bug with the WinRM service that limits the amount of memory available to WinRM. 
+#Without this hotfix installed, Ansible will fail to execute certain commands on the Windows host.
+$url = "https://raw.githubusercontent.com/jborean93/ansible-windows/master/scripts/Install-WMF3Hotfix.ps1"
+$file = "$env:temp\Install-WMF3Hotfix.ps1"
+
+(New-Object -TypeName System.Net.WebClient).DownloadFile($url, $file)
+powershell.exe -ExecutionPolicy ByPass -File $file -Verbose
+
+#WinRM service config
+$url = "https://raw.githubusercontent.com/ansible/ansible/devel/examples/scripts/ConfigureRemotingForAnsible.ps1"
+$file = "$env:temp\ConfigureRemotingForAnsible.ps1"
+
+(New-Object -TypeName System.Net.WebClient).DownloadFile($url, $file)
+
+powershell.exe -ExecutionPolicy ByPass -File $file
+
+#The WinRM services listens for requests on one or more ports. Each of these ports must have a listener created and configured.
+winrm enumerate winrm/config/Listener
+#The ports and the thumbprint of the certificate appear with this command
+
+$selector_set = @{
+    Address = "*"
+    Transport = "HTTPS"
+}
+$value_set = @{
+    CertificateThumbprint = "E6CDAA82EEAF2ECE8546E05DB7F3E01AA47D76CE"
+}
+
+New-WSManInstance -ResourceURI "winrm/config/Listener" -SelectorSet $selector_set -ValueSet $value_set
+
+#------------------------------------------------------------------------------------------------------------------------
+#To test reachability to a windows  machine 
+pip3 install pywinrm
+ansible -i ../inventory windows -m win_ping -e ansible_connection=winrm \
+-e ansible_user=<user> -e ansible_password=<password> \
+-e ansible_winrm_transport=ntlm \
+-e ansible_winrm_server_cert_validation=ignore
+#using ntlm is more secure than basic
+#Kerberos is the recommended authentication option to use when running in a domain environment.
+
+
+
+
+#*********************************** Windows Tasks ***********************************
+#------------------------------------------------------------------------------------------------------------------------
+#------------------------ Task 1: ------------------------
+#Installing Software
+#There are three main ways that Ansible can be used to install software:
+1- Using the win_chocolatey module. This sources the program data from the default public Chocolatey repository. Internal repositories can be used instead by setting the source option.
+2- Using the win_package module. This installs software using an MSI or .exe installer from a local/network path or URL.
+3- Using the win_command or win_shell module to run an installer manually.
+
+vim ~/ansible/install.yml
+- name: Install Chrome
+  hosts: all
+  remote_user: shorouk
+  tasks:
+          # Install/uninstall with win_package
+          - name: Download the chrome package
+            win_get_url:
+                url: https://dl.google.com/tag/s/appguid%3D%7B8A69D345-D564-463C-AFF1-A69D9E530F96%7D%26iid%3D%7B348CB098-3907-782B-BBB0-4E11AB1D2E55%7D%26lang%3Den%26browser%3D4%26usagestats%3D1%26appname%3DGoogle%2520Chrome%26needsadmin%3Dprefers%26ap%3Dx64-stable-statsdef_1%26installdataindex%3Dempty/update2/installers/ChromeSetup.exe
+                dest: C:\temp\chrome.exe
+
+          - name: Ensure chrome is installed via win_package
+            win_package:
+                path: C:\temp\chrome.exe
+                creates_path: C:\Program Files\Google\Chrome
+                state: present
+
+
+ansible-playbook -i ./hosts -e target=windows -e ansible_connection=winrm -e ansible_winrm_server_cert_validation=ignore -k ~/ansible/install.yml
+#Note: with msi we don't need creates_* 
+
+#------------------------------------------------------------------------------------------------------------------------
+#------------------------ Task 2: ------------------------
+#Stop service:
+vim ~/ansible/service.yml
+- name: Stop update service
+  hosts: all
+  remote_user: shorouk
+  tasks:
+          - name: Stop a service
+            win_service:
+                    name: Windows Update
+                    state: stopped
+#state can be absent,paused,started,stopped or restarted
+#------------------------------------------------------------------------------------------------------------------------
+#------------------------ Task 3: ------------------------
+#Users data (member of which groups)
+vim ~/ansible/user.yml
+- name: User creating if not exist
+  hosts: all
+  remote_user: shorouk
+  tasks:
+          - name: create user
+            win_user:
+                    name: shorouk2
+                    state: present
+
+#Note1: we can put password parameter with plain text value for the new user and also add to group by the groups parameter 
+#Note2: we can use state: absent to make remove the user
+          - name: getting user info
+            win_user:
+                    name: shorouk
+                    state: query
+ansible-playbook -i ./hosts -e target=windows -e ansible_connection=winrm -e ansible_winrm_server_cert_validation=ignore -k -v ~/ansible/user.yml
+	
+#parameter  --> usage
+account_disabled  --> disable/enable user 
+groups --> add user to list og groups and if empty with the replace as groups_action ,IT WILL REMOVE ALL groups the user belongs to 
+groups_action --> add , replace (default) or remove
+
+#------------------------------------------------------------------------------------------------------------------------
+#------------------------ Task 3: ------------------------
+#Users data (member of which groups)
+There's no direct way to do that. The only way I figured till now is to check on a user/add user to that group and the list of members appears
+in the return of that playbook (Don't  forget to use -v with ansible-playbook command or use a register)
+
+#------------------------------------------------------------------------------------------------------------------------
+#------------------------ Task 4: ------------------------
+#Adding user to group
+vim ~/ansible/member_add_group.yml
+- name: adding user to group 
+  hosts: all
+  remote_user: shorouk
+  tasks:
+     - name: Add a local and domain user to a local group(remote desktop)
+       win_group_membership:
+          name: Remote Desktop Users
+          members:
+              - NewLocalAdmin
+              - DOMAIN\TestUser
+          state: present
+# state can also be : absent to remove user from this group and : pure will make the list here are the only groups of the user and nothing else
+
+#------------------------------------------------------------------------------------------------------------------------
+#------------------------ Task 5: ------------------------
+#Know logged in users
+vim ~/ansible/logged.yml
+- name: See logged in uers
+  hosts: all
+  remote_user: shorouk
+  tasks:
+          - name: Using query user in cmd
+            win_shell: quser
+            args:
+              executable: cmd
+            register: data_struct
+          - name: print all returned values
+            debug:
+               msg: "{{ data_struct.stdout_lines }}"
+
+
+
+#------------------------------------------------------------------------------------------------------------------------
+#------------------------ Task 6: ------------------------
+#Change hostname
+vim ~/ansible/hostname.yml
+- name: change host name
+  hosts: windows
+  remote_user: shorouk
+  tasks:  
+    - name: Change the hostname to sample-hostname
+      win_hostname:
+        name: sample-hostname
+      register: res
+
+    - name: Reboot
+      win_reboot:
+      when: res.reboot_required
+	
+	
+#------------------------------------------------------------------------------------------------------------------------
+#------------------------ Task 7: ------------------------
+# Update windows: 
+# win_updates must be run by a user with membership in the local Administrators group.
+# win_updates will use the default update service configured for the machine (Windows Update, Microsoft Update, WSUS, etc).
+# win_updates will become SYSTEM using runas unless use_scheduled_task is yes
+# By default win_updates does not manage reboots, but will signal when a reboot is required with the reboot_required return value, as of Ansible v2.5 reboot can be used to reboot the host if required in the one task.
+# win_updates can take a significant amount of time to complete (hours, in some cases).	
+
+vim ~/ansible/update.yml
+- name: Updates
+  hosts: all
+  remote_user: shorouk
+  tasks:
+          - name: Search-only, return list of found updates (if any)
+            win_updates:
+               category_names: SecurityUpdates
+               state: searched
+            register: data_struct
+          - name: print allowed updates
+            debug:
+               msg: "{{ data_struct.updates }}"
+		  - name: print filtered updates based on our criteria
+            debug:
+               msg: "{{ data_struct.filtered_updates }}"
+		  - name: Install all security updates without a scheduled task
+             win_updates:
+             category_names:
+                - SecurityUpdates
+             register: res
+          - name: Reboot
+            win_reboot:
+            when: res.reboot_required
+				
+				
+								
+#category_names can be "CriticalUpdates", "SecurityUpdates", "UpdateRollups" or a list of them 
+
+
+
+#*********************************** More Windows Modules ***********************************
+#------------------------------------------------------------------------------------------------------------------------
+#win_group:
+	Parameters:
+	description  -->  Description of the group.
+	name         -->  Name of the group.
+	state        -->  Create(use present) or remove the group(use absent).
+
+	
+#win_whoami:
+	to show output of whoami /ALL
+
+	#to print outputs to screen
+		 - name: ***
+		   mod_name:
+			 parameter: 	   
+		   register: data_struct
+		 - name: print all returned values
+		   debug:
+			   msg: "{{ data_struct }}"
+			   
+			   
+#win_reboot:
+	Reboot a windows machine
+	#Default of 600sec are max time to wait for machine to re-appear on the network and respond to a test command(whoami) and this value can be changed.
+
+	
+#win_msg
+	Sends a message to logged in users on Windows hosts
+	- name: Warn logged in user
+	  win_msg:
+		display_seconds: 30
+		msg: Testing msg
+	
+	
+#win_environment:
+	Modify environment variables on windows hosts
+	parameters name and level (machine ,process ,user )are req and we can give it state and/or value 
+
+	
+#win_firewall:
+	Enable or disable the Windows Firewall
+
+
+#win_shell:
+	#Execute command or script
+	# You can also use the 'args' form to provide the options. This command
+	# will change the working directory to somedir/ and will only run when
+	# somedir/somelog.txt doesn't exist.
+	- win_shell: C:\somescript.ps1 >> C:\somelog.txt
+	  args:
+		chdir: C:\somedir
+		creates: C:\somelog.txt
+
+	# Run a command under a non-Powershell interpreter (cmd in this case)
+	- win_shell: echo %HOMEDIR%
+	  args:
+		executable: cmd
+	  register: homedir_out
+
+	- name: Run multi-lined shell commands
+	  win_shell: |
+		$value = Test-Path -Path C:\temp
+		if ($value) {
+			Remove-Item -Path C:\temp -Force
+		}
+		New-Item -Path C:\temp -ItemType Directory
+
+		
+#win_hosts:
+	Manages hosts file entries on Windows
+
+
+#win_feature:
+	Installs and uninstalls Windows Features on Windows Server
+
+	
+#win_find:
+	Return a list of files based on specific criteria
+
+	
+#win_file
+	Creates (empty) files, updates file modification stamps of existing files, create or remove directories and remove files.
+
+	
+#win_copy
+	Parameters:
+	backup     --> Determine whether a backup should be created. (Note: No backup is taken when remote_src=False and multiple files are being copied.)
+
+	src        --> Local path to a file to copy to the remote server; can be absolute or relative.
+	               If path is a directory, it is copied (including the source folder name) recursively to dest.
+	               If path is a directory and ends with "/", only the inside contents of that directory are copied to the destination.
+				   
+	content    --> When used instead of src, sets the contents of a file directly to the specified value.
+	               This is for simple values, for anything complex or with formatting please switch to the template module.
+
+	dest       --> Remote absolute path where the file should be copied to.
+	               If src is a directory, this must be a directory too.
+	               Use \ for path separators or \\ when in "double quotes".
+	               If dest ends with \ then source or the contents of source will be copied to the directory without renaming.
+	               If dest is a nonexistent path, it will only be created if dest ends with / or \ , or src is a directory.
+	
+	force      --> If set to yes, the file will only be transferred if the content is different than destination.
+	               If set to no, the file will only be transferred if the destination does not exist.
+	               If set to no, no checksuming of the content is performed which can help improve performance on larger files.
+	
+	remote_src --> If no, it will search for src at originating/master machine.
+	               If yes, it will go to the remote/target machine for the src.
+				   
+				   
+#script:
+	It executes a script from the Ansible controller on one or more Windows hosts. Script currently does not support become, async, or environment variables.				   
+				   
+				   
+				   
+				   
+				   
+#*********************************** Ansible with Linux ***********************************
+#------------------------------------------------------------------------------------------------------------------------
+#------------------------ Task 1: ------------------------
+# Update System:
+
+- name: Updating Centos
+  hosts: linux
+  remote_user: shorouk
+  become: yes
+  become_method: sudo
+  tasks:
+          - name: upgrade all packages
+            yum:
+              name: '*'
+              state: latest
+
+			  
+ansible-playbook -i ./hosts  --ask-become-pass df.yml
+#------------------------------------------------------------------------------------------------------------------------
+#------------------------ Task 2: ------------------------
+# Cumulate df for all servers and send it in mail
+
+- name: Checking space
+  hosts: linux
+  remote_user: shorouk
+  become: yes
+  become_method: sudo
+  tasks:
+          - name: Use df command
+            command: df -h
+            register: res
+
+          - name: print all results
+            debug:
+                    msg: "{{ res.stdout_lines }}"
+					
+--->>>> We can use mail module to send the result 
+
+#------------------------------------------------------------------------------------------------------------------------
+#------------------------ Task 3: ------------------------
+# Creation and remove users 
+- name: Adding user
+  hosts: linux
+  remote_user: shorouk
+  become: yes
+  become_method: sudo
+  tasks:
+    - name: Add the user 'john' with a specific uid and a primary group of 'admin'
+      user:
+         name: john
+         state: present
+         comment: created by ansible
+         password: "{{ 'upassword' | password_hash('sha512') }}"
+         groups: wheel
+         append: yes
+         generate_ssh_key: yes
+         ssh_key_bits: 2048
+         ssh_key_file: .ssh/id_rsa
+
+    - name: Removing user
+      user:
+        name: john
+        state: absent
+        remove: yes
+
+		
+#------------------------------------------------------------------------------------------------------------------------
+#------------------------ Task 4: ------------------------
+# Manage of users’ passwords and keys
+included in Task 3
+
+#------------------------------------------------------------------------------------------------------------------------
+#------------------------ Task 5: ------------------------
+# Run scripts 
+# The local script at path will be transferred to the remote node and then executed.
+# The given script will be processed through the shell environment on the remote node.
+- name: Running script
+  hosts: linux
+  remote_user: shorouk
+  tasks:
+        - name: Run a script
+          script: /root/ansible/script.sh
+
+#This script will be run in /home/<user ansible uses> but we can use chdir argument to change where we stand 
+- name: Running script
+  hosts: linux
+  remote_user: shorouk
+  tasks:
+          - name: Run a script
+            script: /root/ansible/script.sh
+            args:
+                    chdir: /tmp
+
+
+#------------------------------------------------------------------------------------------------------------------------
+#------------------------ Task 6: ------------------------
+# Restarting a service on multiple services
+
+- name: Start service httpd, if not started
+  service:
+    name: httpd
+    state: started
+
+- name: Stop service httpd, if started
+  service:
+    name: httpd
+    state: stopped
+
+- name: Restart service httpd, in all cases
+  service:
+    name: httpd
+    state: restarted
+
+- name: Reload service httpd, in all cases
+  service:
+    name: httpd
+    state: reloaded
+
+- name: Enable service httpd, and not touch the state
+  service:
+    name: httpd
+    enabled: yes
+	
+#------------------------------------------------------------------------------------------------------------------------
+#------------------------ Task 7: ------------------------
+# Configure new machines 
+#I gave each machine a name in the hosts file
+vim hosts
+[windows]
+192.168.232.134
+
+[linux]
+192.168.232.130 new_hostname=test_centos8
+192.168.232.135 ansible_python_interpreter=/usr/bin/python3 new_hostname=test_centos7
+
+- name: Preparing machine 
+  hosts: linux
+  remote_user: shorouk
+  become: yes
+  become_method: sudo
+  tasks:
+     - name: Changing hostnames
+       hostname:
+            name: "{{ new_hostname }}"
+
+
+
+#------------------------------------------------------------------------------------------------------------------------
+#------------------------ Task 8: ------------------------
+# Manage IPA hosts:
+- name: config hosts on ipa
+  hosts: ipa
+  remote_user: ans-user
+  become: yes
+  become_method: sudo
+  tasks:
+          - name: Add host to ipa
+            ipa_host:
+                name: host-sh.pharmaoverseas.org
+                state: present
+                ip_address: 192.168.232.5
+                ns_os_version: CentOS 7
+                ipa_host: freeipa.pharmaoverseas.org
+                ipa_user: admin
+                ipa_pass: <password_of_ipa>
+
+          - name: Delete host from ipa
+            ipa_host:
+                name: host-sh.pharmaoverseas.org
+                state: absent
+                ipa_host: freeipa.pharmaoverseas.org
+                ipa_user: admin
+                ipa_pass: <password_of_ipa>
+                
+#state can be enabled or disabled as well
+#To ensure host and its DNS record is absent, we should add     update_dns: True
+                
+                
+#------------------------------------------------------------------------------------------------------------------------
+#------------------------ Task 9: ------------------------
+# Manage IPA users
+- name: config user on ipa
+  hosts: ipa
+  remote_user: ans-user
+  become: yes
+  become_method: sudo
+  tasks:
+          - name: Add user to ipa
+            ipa_user:
+                name: sh-test
+                state: present
+                givenname: sh-test
+                sn: test
+                password: 12345678
+                telephonenumber:
+                       - '+555123456'
+                uidnumber: 2100
+                ipa_host: freeipa.pharmaoverseas.org
+                ipa_user: admin
+                ipa_pass: <password_of_ipa>
+
+          - name: Delete user from ipa
+            ipa_user:
+                name: sh-test
+                state: absent
+                ipa_host: freeipa.pharmaoverseas.org
+                ipa_user: admin
+                ipa_pass: <password_of_ipa>
+                
+                
+#------------------------------------------------------------------------------------------------------------------------
+#------------------------ Task 10: ------------------------
+# Manage IPA dns records
+
+- name: DNSrecord configuration
+  hosts: ipa
+  remote_user: ans-user
+  become: yes
+  become_method: sudo
+  tasks:
+     - name: Add A record to ipa
+       ipa_dnsrecord:
+         ipa_host: freeipa.pharmaoverseas.org
+         ipa_user: admin
+         ipa_pass: <password_of_ipa>
+         state: present
+         zone_name: pharmaoverseas.org
+         record_name: ansible
+         record_type: 'A'
+         record_value: '192.168.232.130'
+
+     - name: Delete a record
+       ipa_dnsrecord:
+         ipa_host: freeipa.pharmaoverseas.org
+         ipa_user: admin
+         ipa_pass: <password_of_ipa>
+         state: absent
+         zone_name: pharmaoverseas.org
+         record_name: ansible
+         record_type: 'A'
+         record_value: '192.168.232.130'
+
+
+#------------------------------------------------------------------------------------------------------------------------
+#------------------------ Task 11: ------------------------
+# Manage IPA sudo rules
+
+- name: config sudo rules on ipa
+  hosts: ipa
+  remote_user: ans-user
+  become: yes
+  become_method: sudo
+  tasks:
+          - name: Add sudo command to ipa
+            ipa_sudocmd:
+               name: su
+               description: Allow to run su via sudo
+               state: present 
+               ipa_host: freeipa.pharmaoverseas.org
+               ipa_user: admin
+               ipa_pass: <password_of_ipa>
+               
+          - name: Add sudo rule to ipa
+            ipa_sudorule:
+               name: allow_users_to_su
+               state: present 
+               cmd: 
+                 - su 
+               user: 
+                 - so1
+               hostcategory: all
+               ipa_host: freeipa.pharmaoverseas.org
+               ipa_user: admin
+               ipa_pass: <password_of_ipa>
+              
+          - name: Remove sudo rule from ipa
+            ipa_sudorule:
+               name: allow_users_to_su
+               state: absent
+               ipa_host: freeipa.pharmaoverseas.org
+               ipa_user: admin
+               ipa_pass: <password_of_ipa>               
+               
+          - name: Remove sudo command from ipa
+            ipa_sudocmd:
+               name: su
+               state: absent
+               ipa_host: freeipa.pharmaoverseas.org
+               ipa_user: admin
+               ipa_pass: <password_of_ipa>
+          
+
+            
+            
+#There is also ipa_sudocmdgroup to add, modify or delete sudo command group             
+
+#------------------------------------------------------------------------------------------------------------------------
+#------------------------ Task 12: ------------------------
+# Manage IPA groups
+- name: Group configuration
+  hosts: ipa
+  remote_user: ans-user
+  become: yes
+  become_method: sudo
+  tasks:
+     - name: Add a group
+       ipa_group:
+         ipa_host: freeipa.pharmaoverseas.org
+         ipa_user: admin
+         ipa_pass: <password_of_ipa>
+         state: present
+         name: sh-sh-sh
+         user:
+            - so1
+
+     - name: Delete a group
+       ipa_group:
+         ipa_host: freeipa.pharmaoverseas.org
+         ipa_user: admin
+         ipa_pass: <password_of_ipa>
+         state: absent
+         name: sh-sh-sh
+
+#------------------------------------------------------------------------------------------------------------------------
+#ideas
+{{ 1 + item|int }}
+       with_sequence: start=0 end=1
+       
+** In IPA:
+# Ensure the default login shell is bash , default protocol is https and default mail domain is .... .
+- ipa_config:
+    ipadefaultloginshell: /bin/bash
+    ipa_prot: https
+    ipadefaultemaildomain: test.com
+    ipa_host: localhost
+    ipa_user: admin
+    ipa_pass: supersecret
+
+
+#Module ipa_hbacrule is used to create HBAC rules
